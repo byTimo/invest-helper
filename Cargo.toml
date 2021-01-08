@@ -1,0 +1,11 @@
+[package]
+name = "invest-helper"
+version = "0.1.0"
+authors = ["byTimo <race.timo@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rust_decimal = "1.9.0"
+rust_decimal_macros = "1.9.0"
