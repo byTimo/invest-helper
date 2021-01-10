@@ -11,6 +11,215 @@ enum Asset {
 type Portfolio = HashMap<Asset, u64>;
 type Market = HashMap<Asset, Decimal>;
 type Capital = HashMap<Asset, Decimal>;
+type Strategy = HashMap<Asset, f32>;
+type Transaction = (Asset, i64);
+
+fn balance(portfolio: &Portfolio, market: &Market, strategy: &Strategy) -> Vec<Transaction> {
+    let mut transactions = Vec::new();
+
+    let capital = capitalize(portfolio, market);
+    let total = capital
+        .iter()
+        .fold(Decimal::zero(), |acc, (_, price)| acc + price);
+    let target_capital = get_target_capital(strategy, total);
+
+    for (asset, target_sum) in target_capital {
+        if let Some(price) = market.get(&asset) {
+            let existing = capital.get(&asset).copied().unwrap_or(Decimal::zero());
+            match ((target_sum - existing) / price).to_i64() {
+                Some(0) => {}
+                Some(count) => {
+                    transactions.push((asset.clone(), count))
+                }
+                _ => {}
+            };
+        }
+    };
+
+    transactions
+}
+
+#[cfg(test)]
+mod balance_tests {
+    use super::*;
+
+    #[test]
+    fn empty_portfolio_empty_strategy_empty_transactions() {
+        let portfolio = HashMap::new();
+        let market = [
+            (Asset::Stock { ticker: "ticker2".to_string() }, 10.into())
+        ].iter().cloned().collect();
+        let strategy = HashMap::new();
+
+        let expected: Vec<Transaction> = Vec::new();
+
+        let actual = balance(&portfolio, &market, &strategy);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn empty_market_empty_transactions() {
+        let portfolio = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 5)
+        ].iter().cloned().collect();
+        let market = HashMap::new();
+        let strategy = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 1.0),
+        ].iter().cloned().collect();
+
+        let expected: Vec<Transaction> = Vec::new();
+
+        let actual = balance(&portfolio, &market, &strategy);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn only_cash_in_portfolio_cash_and_stock_in_strategy() {
+        let portfolio = [
+            (Asset::Cash(Decimal::new(6000, 0)), 1)
+        ].iter().cloned().collect();
+        let market = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, Decimal::new(7825, 2))
+        ].iter().cloned().collect();
+        let strategy = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 0.98),
+            (Asset::Cash(Decimal::zero()), 0.02),
+        ].iter().cloned().collect();
+
+        let expected: Vec<Transaction> = vec![
+            (Asset::Stock { ticker: "ticker1".to_string() }, 75)
+        ];
+
+        let actual = balance(&portfolio, &market, &strategy);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn portfolio_have_some_part_of_strategy() {
+        let portfolio = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 15),
+            (Asset::Cash(Decimal::new(3000, 0)), 1)
+        ].iter().cloned().collect();
+        let market = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, Decimal::new(7825, 2))
+        ].iter().cloned().collect();
+        let strategy = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 1.0),
+        ].iter().cloned().collect();
+
+        let expected: Vec<Transaction> = vec![
+            (Asset::Stock { ticker: "ticker1".to_string() }, 38)
+        ];
+
+        let actual = balance(&portfolio, &market, &strategy);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn portfolio_has_not_enough_cash_for_buy_transaction() {
+        let portfolio = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 15),
+            (Asset::Cash(Decimal::new(78, 0)), 1)
+        ].iter().cloned().collect();
+        let market = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, Decimal::new(7825, 2))
+        ].iter().cloned().collect();
+        let strategy = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 1.0),
+        ].iter().cloned().collect();
+
+        let expected: Vec<Transaction> = vec![];
+
+        let actual = balance(&portfolio, &market, &strategy);
+
+        assert_eq!(actual, expected);
+    }
+}
+
+fn get_target_capital(strategy: &Strategy, total: Decimal) -> Capital {
+    strategy
+        .into_iter()
+        .map(|(asset, percentage)| (
+            asset.clone(),
+            total.mul(Decimal::from_f32(*percentage).unwrap())
+        ))
+        .collect()
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+
+    #[test]
+    fn empty_strategy_empty_portfolio() {
+        let strategy = HashMap::new();
+        let total = Decimal::new(65000, 2);
+
+        let expected: Capital = HashMap::new();
+
+        let actual = get_target_capital(&strategy, total);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn strategy_has_one_stock() {
+        let strategy = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 1.0),
+        ].iter().cloned().collect();
+        let total = Decimal::new(65000, 2);
+
+        let expected: Capital = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, Decimal::new(65000, 2)),
+        ].iter().cloned().collect();
+
+        let actual = get_target_capital(&strategy, total);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn strategy_has_two_stock_with_different_parts() {
+        let strategy = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 0.62),
+            (Asset::Stock { ticker: "ticker2".to_string() }, 0.38),
+        ].iter().cloned().collect();
+        let total = Decimal::new(783412, 2);
+
+        let expected: Capital = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, Decimal::new(48571544, 4)),
+            (Asset::Stock { ticker: "ticker2".to_string() }, Decimal::new(29769656, 4)),
+        ].iter().cloned().collect();
+
+        let actual = get_target_capital(&strategy, total);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn strategy_has_cash() {
+        let strategy = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, 0.62),
+            (Asset::Stock { ticker: "ticker2".to_string() }, 0.37),
+            (Asset::Cash(Decimal::zero()), 0.01), //TODO (byTimo) не удобно - не понятно что писать в decimal
+        ].iter().cloned().collect();
+        let total = Decimal::new(783412, 2);
+
+        let expected: Capital = [
+            (Asset::Stock { ticker: "ticker1".to_string() }, Decimal::new(48571544, 4)),
+            (Asset::Stock { ticker: "ticker2".to_string() }, Decimal::new(28986244, 4)),
+            (Asset::Cash(Decimal::zero()), Decimal::new(783412, 4)),
+        ].iter().cloned().collect();
+
+        let actual = get_target_capital(&strategy, total);
+
+        assert_eq!(actual, expected);
+    }
+}
 
 fn capitalize(portfolio: &Portfolio, market: &Market) -> Capital {
     portfolio.into_iter().filter_map(|(asset, amount)| {
@@ -27,7 +236,7 @@ fn capitalize(portfolio: &Portfolio, market: &Market) -> Capital {
 }
 
 #[cfg(test)]
-mod tests {
+mod capitalize_tests {
     use super::*;
 
     #[test]
